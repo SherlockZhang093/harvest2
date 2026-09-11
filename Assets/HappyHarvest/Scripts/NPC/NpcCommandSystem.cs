@@ -196,6 +196,8 @@ namespace HappyHarvest
         [SerializeField] float thirst = 100;
         [SerializeField] float hungerLossPerSecond = .08f;
         [SerializeField] float thirstLossPerSecond = .12f;
+        [SerializeField] float eatThreshold = 35f;
+        [SerializeField] float drinkThreshold = 35f;
         [SerializeField] float laborStaminaCost = 7f;
         [SerializeField] float restRecoveryPerSecond = 18f;
         [SerializeField] float sleepHour = 22f;
@@ -219,6 +221,7 @@ namespace HappyHarvest
         bool travelling;
         bool travelArrived;
         float travelRetryAfter;
+        float hungryReminderAfter;
         bool awaitingDrinkSource;
         float bubbleUntil;
         string mood = "平静";
@@ -327,6 +330,16 @@ namespace HappyHarvest
             if (travelling || sleeping) { TickSleep(); return; }
             if (Time.time < travelRetryAfter) return;
 
+            // 生存需求优先：饥渴先于休息、到点睡觉和农活处理。
+            // 否则 resting 或睡眠检查会先 return，饥渴再低也轮不到。
+            if (hunger <= eatThreshold) TryEatFromInventory();
+            if (thirst <= drinkThreshold && !awaitingDrinkSource)
+            {
+                awaitingDrinkSource = true;
+                StartTripHome(true);
+                return;
+            }
+
             float hour = GameManager.GetHourFromRatio(GameManager.Instance.CurrentDayRatio) +
                          GameManager.GetMinuteFromRatio(GameManager.Instance.CurrentDayRatio) / 60f;
             if (hour >= sleepHour && SceneManager.GetActiveScene().name == "Farm_Outdoor")
@@ -350,13 +363,6 @@ namespace HappyHarvest
                 resting = true;
                 mood = "疲惫";
                 Say("这回是真累了，我歇一会儿再接着干。", "💤");
-                return;
-            }
-            if (hunger <= 20) TryEatFromInventory();
-            if (thirst <= 20 && !awaitingDrinkSource)
-            {
-                awaitingDrinkSource = true;
-                StartTripHome(true);
                 return;
             }
             if (agent == null || agent.IsBusy) return;
@@ -527,6 +533,10 @@ namespace HappyHarvest
             if (source == null)
             {
                 travelling = false;
+                // 重置等待标记并延迟重试。之前这里不清 awaitingDrinkSource，
+                // 会导致 NPC 此后再渴也不会触发回家喝水，永久卡死。
+                awaitingDrinkSource = false;
+                travelRetryAfter = Time.time + 10f;
                 SetStatus("等待家中饮水机模块接入");
                 yield break;
             }
