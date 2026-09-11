@@ -34,8 +34,8 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
-/Assets/StreamingAssets/npc-ai-secret.json
-/Assets/StreamingAssets/npc-ai-secret.json.meta
+# NOTE: npc-ai-secret.json is intentionally tracked at the repo owner's request.
+# This repository is PUBLIC — the key inside is exposed and must be treated as compromised.
 
 # Unity generated asset data
 /Assets/AddressableAssetsData/*/*.bin*
