@@ -416,6 +416,10 @@ namespace HappyHarvest
             if (exitObject == null)
             {
                 travelling = false;
+                // 出行失败要清掉目的标记并延迟重试，否则喝水/睡觉请求会永久挂起。
+                awaitingDrinkSource = false;
+                goingToSleep = false;
+                travelRetryAfter = Time.time + 5f;
                 SetStatus("没有找到场景出口 " + exitName);
                 yield break;
             }
@@ -887,7 +891,17 @@ namespace HappyHarvest
                 var entry = npc.Inventory.Entries[i];
                 if (entry.Item is Product && entry.StackSize > bestCount) { bestIndex = i; bestCount = entry.StackSize; }
             }
-            if (bestIndex < 0) { mood = "低落"; SetStatus("饿了，但共享背包里没有可以吃的农产品"); return false; }
+            if (bestIndex < 0)
+            {
+                mood = "低落";
+                // 没东西吃时每帧都会走到这里，加个冷却避免状态栏刷屏。
+                if (Time.time >= hungryReminderAfter)
+                {
+                    hungryReminderAfter = Time.time + 10f;
+                    SetStatus("饿了，但共享背包里没有可以吃的农产品");
+                }
+                return false;
+            }
             npc.Inventory.Remove(bestIndex, 1);
             hunger = Mathf.Min(100, hunger + 45);
             Say("先垫一口，饿着肚子可干不了活。", "🍴");
