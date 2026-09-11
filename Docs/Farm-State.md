@@ -59,8 +59,8 @@ Inspector 的导出按钮将当前快照写到 `Logs/farm-state-ai.json`。该�
 
 ## 验证
 
-在 Farm_Outdoor 的 Play 模式下运行 **Tools → Happy Harvest → Verify Farm State**（Ctrl+Shift+F9），覆盖地块完整性、统一引用、播种 / 缺水 / 浇水 / 生长 / 收获 / 枯死、时间边界、占用互斥、JSON 与保存恢复。检查结束恢复测试前的农田数据，结果写入 `Logs/farm-state-verification.txt`。
+在 Farm_Outdoor 的 Play 模式下运行 **Tools → Happy Harvest → Verify Farm State**（Ctrl+Shift+F9），覆盖地块完整性、统一引用、播种 / 缺水 / 浇水 / 施肥 / 除草 / 生长 / 收获 / 枯死、时间边界、占用互斥、JSON 与保存恢复。检查结束恢复测试前的农田数据，结果写入 `Logs/farm-state-verification.txt`。
 
-原有 **Verify NPC Watering**（Ctrl+Shift+F8）额外验证 NPC 占用与释放、浇水后 SO 状态同步，结果写入 `Logs/npc-watering-verification.txt`。应在新进入 Play、示例地尚未浇水时运行。
+**Verify NPC Watering**（Ctrl+Shift+F8）额外验证 NPC 自主检索、占用与释放，以及播种、浇水、施肥、除草、收获后 SO 状态同步，结果写入 `Logs/npc-watering-verification.txt`。
 
-2026-09-09 实测：21 项农田状态检查和 19 项 NPC 检查全部通过。退出 Play 后重新导出 JSON，全部 138 个地块与运行前逐项一致，计时恢复为 0，初始缺水地块恢复为 `(9, -15)`。
+验证脚本会在结束时恢复进入检查前的农田快照，不会把测试数据留在 SO 中。

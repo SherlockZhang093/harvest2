@@ -31,7 +31,9 @@ namespace HappyHarvest
         {
             instance = null;
             SceneManager.sceneLoaded -= SceneLoaded;
-            SceneManager.sceneLoaded += SceneLoaded;
+            // The natural-language NPC system now owns runtime bootstrapping.
+            // Keep this component available for the existing editor verification tool.
+            NpcCommandSystem.EnsureCreated();
         }
 
         static void SceneLoaded(Scene scene, LoadSceneMode mode)
@@ -181,7 +183,7 @@ namespace HappyHarvest
             Label("AI NPC 自动农务", panel, 16, 12, 328, 32, 23);
             Label("自动播种、浇水、施肥、除草和收获", panel, 16, 49, 328, 30, 16);
             targetLabel = Label("请选择一块耕地", panel, 16, 83, 328, 28, 17);
-            status = Label("等待浇水任务", panel, 16, 116, 328, 50, 16);
+            status = Label("等待农务任务", panel, 16, 116, 328, 50, 16);
             waterButton = MakeButton("立即扫描", 16, 174, 206, SendWateringTask);
             cancelButton = MakeButton("取消", 234, 174, 110, () => Agent.Cancel());
         }

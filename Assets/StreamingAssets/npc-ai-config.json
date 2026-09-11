@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "mode": "direct",
+  "endpoint": "https://api.deepseek.com/chat/completions",
+  "accessToken": "",
+  "model": "deepseek-v4-flash",
+  "timeoutSeconds": 12
+}

@@ -210,7 +210,7 @@ namespace HappyHarvest
         public string farmId;
         public int revision;
         public float elapsedSeconds;
-        public string[] terrainActions = { "till", "plant", "water", "harvest" };
+        public string[] terrainActions = { "till", "plant", "water", "fertilize", "weed", "harvest" };
         public string[] npcActions = { "plant", "water", "fertilize", "weed", "harvest" };
         public List<FarmPlotSnapshot> plots = new();
     }

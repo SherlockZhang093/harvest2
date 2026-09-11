@@ -1,0 +1,7 @@
+name = "harvest2-npc-ai"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+OPENAI_MODEL = "gpt-5-mini"
+MAX_REQUESTS_PER_MINUTE = "20"

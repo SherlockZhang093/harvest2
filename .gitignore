@@ -34,8 +34,16 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+/Assets/StreamingAssets/npc-ai-secret.json
+/Assets/StreamingAssets/npc-ai-secret.json.meta
 
 # Unity generated asset data
 /Assets/AddressableAssetsData/*/*.bin*
 /Assets/StreamingAssets/aa.meta
 /Assets/StreamingAssets/aa/
+
+# Node dependencies
+server/node_modules/
+
+# WorkBuddy tooling
+.workbuddy/

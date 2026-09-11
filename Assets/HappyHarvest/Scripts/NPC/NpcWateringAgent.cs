@@ -15,7 +15,7 @@ namespace HappyHarvest
         public enum TaskState { Idle, Moving, Watering, Performing, Succeeded, Failed, Cancelled }
         public TaskState State { get; private set; }
         public FarmAction CurrentAction { get; private set; }
-        public string Status { get; private set; } = "等待浇水任务";
+        public string Status { get; private set; } = "等待农务任务";
         public bool IsBusy => State == TaskState.Moving || State == TaskState.Watering || State == TaskState.Performing;
         public Vector3Int TargetCell { get; private set; }
         public event Action<TaskState, string> TaskFinished;
@@ -79,6 +79,28 @@ namespace HappyHarvest
                         return true;
                     }
             return false;
+        }
+
+        public bool TryBuildTravelPath(Vector2 worldTarget, out List<Vector2> travelPath)
+        {
+            travelPath = null;
+            if (terrain == null || navigation == null) return false;
+            var targetCell = terrain.Grid.WorldToCell(worldTarget);
+            targetCell.z = 0;
+            return navigation.TryFind(body.position, targetCell, out travelPath);
+        }
+
+        public void MoveForTravel(Vector2 nextPosition)
+        {
+            var direction = nextPosition - body.position;
+            SetMotion(direction);
+            body.MovePosition(nextPosition);
+        }
+
+        public void StopTravelMotion()
+        {
+            body.velocity = Vector2.zero;
+            SetMotion(Vector2.zero);
         }
 
         // Shared entry point for the button and future planners. A busy task cannot be overwritten.
@@ -278,7 +300,7 @@ namespace HappyHarvest
         public void Cancel()
         {
             if (IsBusy) Finish(applied ? TaskState.Succeeded : TaskState.Cancelled,
-                applied ? "浇水已生效" : "已取消，土地未被修改");
+                applied ? ActionLabel(CurrentAction) + "已生效" : "已取消，土地未被修改");
         }
 
         void Finish(TaskState state, string message)
