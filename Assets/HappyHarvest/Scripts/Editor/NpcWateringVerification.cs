@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using HappyHarvest;
 using UnityEditor;
 using UnityEngine;
@@ -125,10 +126,23 @@ public static class NpcWateringVerification
         Assert(npc.GetComponentInChildren<Animator>().GetFloat("Speed") == 0, "NPC returns to idle motion");
         Assert(worker.Status.Contains("浇水完成"), "Autonomous worker receives completion feedback");
 
-        Assert(npc.RequestFertilize(target), "NPC accepts fertilizing from the shared SO need");
+        int fertilizerBefore = GameManager.Instance.Player.Inventory.GetItemCount<Fertilizer>();
+        Assert(fertilizerBefore > 0, "NPC starts with fertilizer in the shared inventory");
+        Assert(npc.RequestFertilize(target), "NPC accepts fertilizing when fertilizer is available");
         while (npc.IsBusy) yield return null;
         Assert(farm.State.GetPlot(target).IsFertilized && npc.State == NpcWateringAgent.TaskState.Succeeded,
             "NPC performs fertilizing and updates the SO");
+        Assert(GameManager.Instance.Player.Inventory.GetItemCount<Fertilizer>() == fertilizerBefore - 1,
+            "Successful fertilizing consumes exactly one fertilizer");
+        farm.State.GetPlot(target).IsFertilized = false;
+        var fertilizer = GameManager.Instance.ItemDatabase.GetFromID("fertilizer") as Fertilizer;
+        int fertilizerRemaining = GameManager.Instance.Player.Inventory.GetItemCount<Fertilizer>();
+        Assert(fertilizer != null && GameManager.Instance.Player.Inventory.TryRemoveItem<Fertilizer>(fertilizerRemaining),
+            "Verification can exhaust the remaining fertilizer");
+        Assert(!npc.RequestFertilize(target) && !farm.State.GetPlot(target).IsFertilized,
+            "Fertilizing without fertilizer is rejected and leaves the plot unchanged");
+        Assert(GameManager.Instance.Player.Inventory.AddItem(fertilizer, fertilizerBefore),
+            "Verification restores its consumed fertilizer");
         farm.State.GetPlot(target).HasWeeds = true;
         Assert(npc.RequestWeed(target), "NPC accepts a weeding need");
         while (npc.IsBusy) yield return null;
@@ -140,10 +154,27 @@ public static class NpcWateringVerification
         Assert(farm.GetCropDataAt(target) == null && npc.State == NpcWateringAgent.TaskState.Succeeded,
             "NPC performs harvest and clears the final-harvest crop");
         var carrot = GameManager.Instance.CropDatabase.GetFromID("carrot_crop");
+        var carrotSeed = GameManager.Instance.ItemDatabase.GetFromID("carrot_seed") as SeedBag;
+        int carrotSeedsBefore = carrotSeed == null ? 0 : GameManager.Instance.Player.Inventory.Entries
+            .Where(entry => entry.Item == carrotSeed).Sum(entry => entry.StackSize);
+        Assert(carrotSeed != null && carrotSeedsBefore > 0, "NPC starts with carrot seed in the shared inventory");
+        for (int i = 0; i < GameManager.Instance.Player.Inventory.Entries.Length; i++)
+        {
+            var entry = GameManager.Instance.Player.Inventory.Entries[i];
+            if (entry.Item == carrotSeed) GameManager.Instance.Player.Inventory.Remove(i, entry.StackSize);
+        }
+        Assert(!npc.RequestPlant(target, carrot) && farm.GetCropDataAt(target) == null,
+            "Planting without the matching seed is rejected and leaves the plot unchanged");
+        Assert(GameManager.Instance.Player.Inventory.AddItem(carrotSeed, carrotSeedsBefore),
+            "Verification restores carrot seeds before successful planting");
         Assert(npc.RequestPlant(target, carrot), "NPC accepts an empty tilled plot for planting");
         while (npc.IsBusy) yield return null;
         Assert(farm.GetCropDataAt(target)?.GrowingCrop == carrot && npc.State == NpcWateringAgent.TaskState.Succeeded,
             "NPC performs planting and writes the crop into the SO");
+        int carrotSeedsAfter = GameManager.Instance.Player.Inventory.Entries
+            .Where(entry => entry.Item == carrotSeed).Sum(entry => entry.StackSize);
+        Assert(carrotSeedsAfter == carrotSeedsBefore - 1, "Successful planting consumes exactly one matching seed");
+        Assert(GameManager.Instance.Player.Inventory.AddItem(carrotSeed), "Verification restores its consumed seed");
 
         worker.HarvestEnabled = worker.WeedEnabled = worker.WaterEnabled = worker.FertilizeEnabled = worker.PlantEnabled = true;
     }

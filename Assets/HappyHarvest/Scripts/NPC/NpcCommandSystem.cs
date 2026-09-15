@@ -11,7 +11,7 @@ using UnityEngine.UI;
 namespace HappyHarvest
 {
     public enum NpcScheduleMode { Append, Priority, CancelCurrent, CancelAll }
-    public enum NpcGoalKind { FarmCycle, Plant, Water, Fertilize, Weed, Harvest, Sleep, Unknown }
+    public enum NpcGoalKind { FarmCycle, Plant, Water, Fertilize, Weed, Harvest, Drink, Sleep, Rest, Eat, Store, Unknown }
 
     [Serializable]
     public sealed class NpcAiRequest
@@ -19,6 +19,12 @@ namespace HappyHarvest
         public int schemaVersion = 1;
         public long requestId;
         public string playerText;
+        public string requestKind;
+        public float hour;
+        public string executionState;
+        public string blockedReason;
+        public NpcAiTask currentOrder;
+        public NpcAiTask[] queuedOrders;
         public string persona;
         public string instructions;
         public string currentScene;
@@ -30,7 +36,7 @@ namespace HappyHarvest
         public NpcNeedsSnapshot needs;
         public FarmSnapshot farm;
         public NpcInventorySnapshot[] inventory;
-        public string[] supportedGoals = { "farm_cycle", "plant", "water", "fertilize", "weed", "harvest", "sleep" };
+        public string[] supportedGoals = { "farm_cycle", "plant", "water", "fertilize", "weed", "harvest", "drink", "sleep", "rest", "eat", "store" };
         public string[] scheduleModes = { "append", "priority", "cancel_current", "cancel_all" };
     }
 
@@ -89,87 +95,11 @@ namespace HappyHarvest
         bool TryDrink(PlayerController npc);
     }
 
-    public sealed class LocalNpcDecisionProvider : INpcDecisionProvider
+    // Failure is a transport result, never a locally invented NPC decision.
+    public sealed class UnavailableNpcDecisionProvider : INpcDecisionProvider
     {
-        public void Decide(NpcAiRequest request, Action<NpcAiResponse> completed)
-        {
-            string text = (request.playerText ?? "").Trim().ToLowerInvariant();
-            var response = new NpcAiResponse { requestId = request.requestId };
-            response.scheduleMode = ContainsAny(text, "全部取消", "都取消", "清空任务") ? "cancel_all" :
-                ContainsAny(text, "停下", "别干", "取消当前") ? "cancel_current" :
-                ContainsAny(text, "先", "马上", "立刻", "优先") ? "priority" : "append";
-
-            if (response.scheduleMode == "cancel_all" || response.scheduleMode == "cancel_current")
-            {
-                response.goal = "unknown";
-                response.dialogue = response.scheduleMode == "cancel_all" ? "行，今天的安排全撤了。" : "好好好，这件先不干了。";
-            }
-            else if (ContainsAny(text, "干农活", "农活", "种地")) Set(response, "farm_cycle", "这么一整套都归我？行吧，我会做到收获。", text);
-            else if (ContainsAny(text, "睡觉", "回家睡")) Set(response, "sleep", "终于肯让我收工了？这就回家。", text);
-            else
-            {
-                var tasks = ExtractOrderedTasks(text);
-                if (tasks.Count > 0)
-                {
-                    response.tasks = tasks.ToArray();
-                    response.goal = tasks[0].goal;
-                    response.cropId = tasks[0].cropId;
-                    response.dialogue = tasks.Count > 1 ? "行，我按你说的顺序一件件做。" : DialogueFor(tasks[0].goal);
-                }
-                else
-                {
-                    response.goal = "unknown";
-                    response.dialogue = "这话我没听懂。你可以让我去干农活、播种、浇水、除草、施肥或收获。";
-                    response.error = "unsupported_intent";
-                }
-            }
-            completed?.Invoke(response);
-        }
-
-        static void Set(NpcAiResponse response, string goal, string dialogue, string text)
-        {
-            response.goal = goal;
-            response.dialogue = dialogue;
-            if (text.Contains("胡萝卜")) response.cropId = "carrot_crop";
-            else if (text.Contains("玉米")) response.cropId = "corn_crop";
-            else if (text.Contains("小麦")) response.cropId = "wheat_crop";
-            response.tasks = new[] { new NpcAiTask { goal = response.goal, cropId = response.cropId } };
-        }
-
-        static List<NpcAiTask> ExtractOrderedTasks(string text)
-        {
-            var found = new List<(int position, string goal)>();
-            AddFirst(found, text, "plant", "播种", "种胡萝卜", "种玉米", "种小麦");
-            AddFirst(found, text, "water", "浇水");
-            AddFirst(found, text, "fertilize", "施肥");
-            AddFirst(found, text, "weed", "除草", "拔草");
-            AddFirst(found, text, "harvest", "收获", "收菜", "采收");
-            return found.OrderBy(x => x.position).Select(x => new NpcAiTask
-            {
-                goal = x.goal,
-                cropId = text.Contains("胡萝卜") ? "carrot_crop" : text.Contains("玉米") ? "corn_crop" :
-                    text.Contains("小麦") ? "wheat_crop" : ""
-            }).ToList();
-        }
-
-        static void AddFirst(List<(int position, string goal)> output, string text, string goal, params string[] words)
-        {
-            int position = words.Select(word => text.IndexOf(word, StringComparison.Ordinal))
-                .Where(x => x >= 0).DefaultIfEmpty(-1).Min();
-            if (position >= 0) output.Add((position, goal));
-        }
-
-        static string DialogueFor(string goal) => goal switch
-        {
-            "plant" => "又要弯腰播种了……行，我去。",
-            "water" => "又要拎水壶了……我去浇。",
-            "fertilize" => "行，我去施肥。",
-            "weed" => "草倒是长得比庄稼积极……我去处理。",
-            "harvest" => "知道了，成熟的我都收回来。",
-            _ => "知道了。"
-        };
-
-        static bool ContainsAny(string value, params string[] needles) => needles.Any(value.Contains);
+        public void Decide(NpcAiRequest request, Action<NpcAiResponse> completed) =>
+            completed?.Invoke(new NpcAiResponse { requestId = request.requestId, error = "ai_unavailable" });
     }
 
     [DefaultExecutionOrder(-100)]
@@ -183,7 +113,6 @@ namespace HappyHarvest
             public string Dialogue;
             public bool Started;
             public bool HasWorked;
-            public bool ResumeInterruptedAfter;
             public readonly HashSet<string> Targets = new();
         }
 
@@ -204,7 +133,14 @@ namespace HappyHarvest
         [SerializeField] float wakeHour = 6f;
 
         readonly LinkedList<WorkOrder> queue = new();
-        readonly Stack<WorkOrder> interrupted = new();
+        readonly Queue<string> playerCommands = new();
+        readonly Queue<string> observations = new();
+        bool decisionPending;
+        float nextNeedsDecision;
+        Coroutine travelRoutine;
+        bool changingScene;
+        NpcAiResponse deferredDecision;
+        bool deferredAutonomous;
         readonly List<string> memory = new();
         INpcDecisionProvider decisionProvider;
         WorkOrder current;
@@ -234,6 +170,7 @@ namespace HappyHarvest
         Text planText;
         Text bubbleText;
         GameObject bubbleObject;
+        RectTransform bubbleRect;
         Font runtimeFont;
         string lastPlanSummary = "尚未收到指令";
         string travelPurpose;
@@ -254,7 +191,7 @@ namespace HappyHarvest
             if (instance != null && instance != this) { Destroy(gameObject); return; }
             instance = this;
             DontDestroyOnLoad(gameObject);
-            var localProvider = new LocalNpcDecisionProvider();
+            var localProvider = new UnavailableNpcDecisionProvider();
             decisionProvider = NpcDecisionProviderFactory.Create(this, localProvider);
             SceneManager.sceneLoaded += OnSceneLoaded;
             BuildUI();
@@ -317,8 +254,8 @@ namespace HappyHarvest
                 agent = npc != null
                     ? npc.GetComponent<NpcWateringAgent>() ?? npc.gameObject.AddComponent<NpcWateringAgent>()
                     : null;
-                if (!travelling && goingToSleep) StartCoroutine(MoveToNamedObject("Bed", BeginSleeping));
-                else if (!travelling && awaitingDrinkSource) StartCoroutine(MoveToDrinkSource());
+                if (!travelling && goingToSleep) StartTravel(MoveToNamedObject("Bed", BeginSleeping));
+                else if (!travelling && awaitingDrinkSource) StartTravel(MoveToDrinkSource());
             }
         }
 
@@ -327,46 +264,33 @@ namespace HappyHarvest
             if (GameManager.Instance == null || npc == null) return;
             TickNeeds();
             UpdateUI();
-            if (travelling || sleeping) { TickSleep(); return; }
-            if (Time.time < travelRetryAfter) return;
-
-            // 生存需求优先：饥渴先于休息、到点睡觉和农活处理。
-            // 否则 resting 或睡眠检查会先 return，饥渴再低也轮不到。
-            if (hunger <= eatThreshold) TryEatFromInventory();
-            if (thirst <= drinkThreshold && !awaitingDrinkSource)
+            if (changingScene) return;
+            if (deferredDecision != null)
             {
-                awaitingDrinkSource = true;
-                StartTripHome(true);
-                return;
+                var response = deferredDecision;
+                deferredDecision = null;
+                ApplyDecision(response, deferredAutonomous);
+                decisionPending = false;
             }
-
-            float hour = GameManager.GetHourFromRatio(GameManager.Instance.CurrentDayRatio) +
-                         GameManager.GetMinuteFromRatio(GameManager.Instance.CurrentDayRatio) / 60f;
-            if (hour >= sleepHour && SceneManager.GetActiveScene().name == "Farm_Outdoor")
-            {
-                StartTripHome(false);
-                return;
-            }
-            if (hour >= sleepHour && SceneManager.GetActiveScene().name == "House_Interior")
-            {
-                StartTripHome(false);
-                return;
-            }
-            if (resting)
-            {
-                stamina = Mathf.Min(100, stamina + restRecoveryPerSecond * Time.deltaTime);
-                if (stamina >= 55) { resting = false; mood = "平静"; Say("歇够了，接着干。", "🙂"); }
-                return;
-            }
-            if (stamina <= 12)
-            {
-                resting = true;
-                mood = "疲惫";
-                Say("这回是真累了，我歇一会儿再接着干。", "💤");
-                return;
-            }
-            if (agent == null || agent.IsBusy) return;
+            PumpDecisions();
+            if (!GameManager.Instance.IsTicking) return;
+            RequestNeedsDecision();
+            if (travelling) return;
+            if (sleeping) { TickSleep(); return; }
+            if (Time.time < travelRetryAfter || agent == null || agent.IsBusy) return;
             ProcessNextStep();
+        }
+
+        float CurrentHour => GameManager.GetHourFromRatio(GameManager.Instance.CurrentDayRatio) +
+            GameManager.GetMinuteFromRatio(GameManager.Instance.CurrentDayRatio) / 60f;
+
+        void RequestNeedsDecision()
+        {
+            if (decisionPending || playerCommands.Count > 0 || sleeping || resting || Time.unscaledTime < nextNeedsDecision) return;
+            if (thirst > drinkThreshold && hunger > eatThreshold && stamina > 12 &&
+                CurrentHour < sleepHour && string.IsNullOrEmpty(stepBlockReason)) return;
+            nextNeedsDecision = Time.unscaledTime + 30f;
+            SendDecision("请根据当前需求、时间和执行阻碍判断是否需要调整安排；无需调整时返回 unknown 和空 tasks。不要重复已有任务。", "needs");
         }
 
         void TickNeeds()
@@ -378,18 +302,11 @@ namespace HappyHarvest
 
         void TickSleep()
         {
-            if (!sleeping || travelling) return;
-            float hour = GameManager.GetHourFromRatio(GameManager.Instance.CurrentDayRatio) +
-                         GameManager.GetMinuteFromRatio(GameManager.Instance.CurrentDayRatio) / 60f;
-            if (hour >= wakeHour && hour < sleepHour)
-            {
-                sleeping = false;
-                stamina = 100;
-                hunger = Mathf.Max(hunger, 55);
-                thirst = Mathf.Max(thirst, 55);
-                Say("天亮了……昨天的活还得接着干。", "☀");
-                StartCoroutine(WalkToExitThenChangeScene("Exit_Trigger", 2, 0, "Farm_Outdoor"));
-            }
+            if (!sleeping || travelling || CurrentHour < wakeHour || CurrentHour >= sleepHour) return;
+            sleeping = false;
+            stamina = 100;
+            mood = "平静";
+            CompleteCurrentOrder("睡眠结束，已醒来，仍在家中");
         }
 
         void StartTripHome(bool forDrink)
@@ -397,8 +314,8 @@ namespace HappyHarvest
             if (travelling) return;
             if (SceneManager.GetActiveScene().name == "House_Interior")
             {
-                if (forDrink) { awaitingDrinkSource = true; StartCoroutine(MoveToDrinkSource()); }
-                else { goingToSleep = true; StartCoroutine(MoveToNamedObject("Bed", BeginSleeping)); }
+                if (forDrink) { awaitingDrinkSource = true; StartTravel(MoveToDrinkSource()); }
+                else { goingToSleep = true; StartTravel(MoveToNamedObject("Bed", BeginSleeping)); }
                 return;
             }
             if (SceneManager.GetActiveScene().name != "Farm_Outdoor") return;
@@ -406,8 +323,8 @@ namespace HappyHarvest
             awaitingDrinkSource = forDrink;
             goingToSleep = !forDrink;
             mood = "疲惫";
-            Say(forDrink ? "渴得不行了，我回家喝口水。" : "到点了，我得回家睡觉。", forDrink ? "💧" : "🌙");
-            StartCoroutine(WalkToExitThenChangeScene("HouseEntrance", 3, 1, "House_Interior"));
+            SetStatus(forDrink ? "正在执行 AI 喝水安排" : "正在执行 AI 睡眠安排");
+            StartTravel(WalkToExitThenChangeScene("HouseEntrance", 3, 1, "House_Interior"));
         }
 
         IEnumerator WalkToExitThenChangeScene(string exitName, int targetScene, int targetSpawn, string sceneName)
@@ -419,12 +336,14 @@ namespace HappyHarvest
                 // 出行失败要清掉目的标记并延迟重试，否则喝水/睡觉请求会永久挂起。
                 awaitingDrinkSource = false;
                 goingToSleep = false;
+                ResetDrinkOrderForRetry();
                 travelRetryAfter = Time.time + 5f;
                 SetStatus("没有找到场景出口 " + exitName);
                 yield break;
             }
             yield return WalkToTarget(exitObject.transform, .45f, true);
             if (!travelArrived) yield break;
+            changingScene = true;
             GameManager.Instance.MoveTo(targetScene, targetSpawn);
             yield return ClearTravelAfterScene(sceneName);
         }
@@ -433,6 +352,7 @@ namespace HappyHarvest
         {
             while (SceneManager.GetActiveScene().name != sceneName) yield return null;
             travelling = false;
+            changingScene = false;
             AttachToScene(SceneManager.GetActiveScene());
         }
 
@@ -442,6 +362,8 @@ namespace HappyHarvest
             if (target == null || npc == null)
             {
                 travelling = false;
+                ResetDrinkOrderForRetry();
+                travelRetryAfter = Time.time + 5f;
                 SetStatus("家中没有找到 " + objectName);
                 yield break;
             }
@@ -525,43 +447,66 @@ namespace HappyHarvest
             if (agent != null) agent.StopTravelMotion();
             travelling = false;
             travelArrived = false;
+            ResetDrinkOrderForRetry();
             travelRetryAfter = Time.time + 5f;
             SetStatus(reason);
+        }
+
+        void ResetDrinkOrderForRetry()
+        {
+            awaitingDrinkSource = goingToSleep = false;
+            if (current != null) current.Started = false;
+        }
+
+        void CompleteCurrentOrder(string fact)
+        {
+            current = null;
+            resting = false;
+            stepBlockReason = null;
+            ReportEvent(fact);
+        }
+
+        void ReportEvent(string fact)
+        {
+            SetStatus(fact);
+            memory.Add(fact);
+            if (memory.Count > 8) memory.RemoveAt(0);
+            observations.Enqueue(fact);
         }
 
         IEnumerator MoveToDrinkSource()
         {
             travelling = true;
+            // Scene-owned components finish registering one frame after a transition.
+            yield return null;
             var sources = FindObjectsOfType<MonoBehaviour>().OfType<INpcDrinkSource>().ToArray();
             var source = sources.FirstOrDefault(x => x.CanDrink);
-            if (source == null)
+            var dispenser = GameObject.Find("Water Dispenser");
+            var fallbackPoint = dispenser != null ? dispenser.transform.Find("InteractionPoint") : null;
+            if (source == null && fallbackPoint == null)
             {
                 travelling = false;
-                // 重置等待标记并延迟重试。之前这里不清 awaitingDrinkSource，
-                // 会导致 NPC 此后再渴也不会触发回家喝水，永久卡死。
-                awaitingDrinkSource = false;
+                // 重置等待标记和显式喝水订单，延迟后可重新发起。
+                ResetDrinkOrderForRetry();
                 travelRetryAfter = Time.time + 10f;
-                SetStatus("等待家中饮水机模块接入");
+                SetStatus("家中没有可用的饮水源，稍后重试");
                 yield break;
             }
-            var target = ((MonoBehaviour)source).transform;
+            var target = source != null ? ((MonoBehaviour)source).transform : fallbackPoint;
             yield return WalkToTarget(target, .45f, false);
             travelling = false;
             if (!travelArrived) yield break;
-            if (source.TryDrink(npc))
+            if (source == null || source.TryDrink(npc))
             {
                 thirst = 100;
                 awaitingDrinkSource = false;
-                Say("总算活过来了。", "💧");
-                float hour = GameManager.GetHourFromRatio(GameManager.Instance.CurrentDayRatio) +
-                             GameManager.GetMinuteFromRatio(GameManager.Instance.CurrentDayRatio) / 60f;
-                if (hour >= sleepHour)
-                {
-                    goingToSleep = true;
-                    StartCoroutine(MoveToNamedObject("Bed", BeginSleeping));
-                    yield break;
-                }
-                StartCoroutine(WalkToExitThenChangeScene("Exit_Trigger", 2, 0, "Farm_Outdoor"));
+                CompleteCurrentOrder("喝水完成，水分已恢复；当前仍在饮水处");
+            }
+            else
+            {
+                ResetDrinkOrderForRetry();
+                travelRetryAfter = Time.time + 5f;
+                SetStatus("饮水机暂时无法使用，稍后重试");
             }
         }
 
@@ -571,7 +516,7 @@ namespace HappyHarvest
             awaitingDrinkSource = false;
             sleeping = true;
             mood = "平静";
-            Say("晚安。明天的活明天再说。", "💤");
+            ReportEvent("已到床边，开始睡眠");
             SetStatus("正在睡觉，06:00 起床");
         }
 
@@ -580,10 +525,48 @@ namespace HappyHarvest
             string value = input != null ? input.text.Trim() : "";
             if (string.IsNullOrEmpty(value)) return;
             input.text = "";
-            long requestId = ++nextRequestId;
-            var request = BuildRequest(requestId, value);
-            SetStatus("正在理解：" + value);
-            decisionProvider.Decide(request, ApplyDecision);
+            playerCommands.Enqueue(value);
+            SetStatus("指令已提交，等待 AI 理解：" + value);
+            PumpDecisions();
+        }
+
+        void PumpDecisions()
+        {
+            if (decisionPending || changingScene) return;
+            if (playerCommands.Count > 0) SendDecision(playerCommands.Dequeue(), "player");
+            else if (observations.Count > 0) SendDecision(observations.Dequeue(), "dialogue");
+        }
+
+        void SendDecision(string text, string kind)
+        {
+            decisionPending = true;
+            if (kind == "player")
+            {
+                memory.Add("玩家指令：" + text);
+                if (memory.Count > 8) memory.RemoveAt(0);
+            }
+            var request = BuildRequest(++nextRequestId, text);
+            request.requestKind = kind;
+            decisionProvider.Decide(request, response =>
+            {
+                if (this == null) return;
+                if (response == null || response.requestId != request.requestId || response.schemaVersion != 1 ||
+                    !string.IsNullOrEmpty(response.error))
+                {
+                    SetStatus("AI 未返回有效决策，原任务保持不变；请重试");
+                    decisionPending = false;
+                    return;
+                }
+                if (kind == "dialogue")
+                {
+                    Say(response.dialogue, "·");
+                    decisionPending = false;
+                    return;
+                }
+                if (changingScene) { deferredDecision = response; deferredAutonomous = kind == "needs"; return; }
+                ApplyDecision(response, kind == "needs");
+                decisionPending = false;
+            });
         }
 
         NpcAiRequest BuildRequest(long id, string playerText)
@@ -592,13 +575,18 @@ namespace HappyHarvest
             {
                 requestId = id,
                 playerText = playerText,
+                hour = CurrentHour,
+                executionState = sleeping ? "sleeping" : travelling ? "travelling" : resting ? "resting" : "working",
+                blockedReason = stepBlockReason ?? "",
+                currentOrder = current == null ? null : new NpcAiTask { goal = GoalKey(current.Goal), cropId = current.CropId },
+                queuedOrders = queue.Select(x => new NpcAiTask { goal = GoalKey(x.Goal), cropId = x.CropId }).ToArray(),
                 persona = "嘴上爱抱怨，但做事靠谱；轻度喜剧感；不会因心情擅自拒绝可执行工作。",
                 instructions = "结合玩家指令与游戏快照生成工作安排。只能使用 supportedGoals；判断 append、priority、cancel_current 或 cancel_all；可返回有序 tasks。不要修改体力、背包、农田或声称动作已经成功。只返回 NpcAiResponse JSON。",
                 currentScene = SceneManager.GetActiveScene().name,
-                currentTask = current == null ? "none" : current.Goal.ToString(),
+                currentTask = current == null ? "none" : GoalKey(current.Goal),
                 currentTargetCount = current?.Targets.Count ?? 0,
                 currentHasWorked = current?.HasWorked ?? false,
-                pendingTasks = queue.Select(x => x.Goal.ToString()).ToArray(),
+                pendingTasks = queue.Select(x => GoalKey(x.Goal)).ToArray(),
                 recentMemory = memory.ToArray(),
                 needs = NeedsSnapshot(),
                 farm = terrain != null && terrain.State != null ? terrain.State.CaptureSnapshot() : null,
@@ -606,55 +594,95 @@ namespace HappyHarvest
             };
         }
 
-        void ApplyDecision(NpcAiResponse response)
+        void ApplyDecision(NpcAiResponse response, bool autonomous = false)
         {
-            if (response == null || response.schemaVersion != 1 || response.requestId <= 0 ||
-                response.requestId > nextRequestId || response.requestId < newestAcceptedRequest)
-            {
-                SetStatus("忽略了无效或过时的 AI 回复");
-                return;
-            }
-            newestAcceptedRequest = response.requestId;
-            if (!TryParseMode(response.scheduleMode, out var mode)) { SetStatus("AI 返回了未知任务安排方式"); return; }
-            if (mode == NpcScheduleMode.CancelAll)
-            {
-                CancelAgent(); queue.Clear(); interrupted.Clear(); current = null;
-                lastPlanSummary = "AI 规划：清空全部任务";
-                Say(response.dialogue, "✓"); return;
-            }
-            if (mode == NpcScheduleMode.CancelCurrent)
-            {
-                CancelAgent(); current = null;
-                lastPlanSummary = "AI 规划：取消当前任务";
-                Say(response.dialogue, "✓"); return;
-            }
-            var taskResults = response.tasks != null && response.tasks.Length > 0
-                ? response.tasks
-                : new[] { new NpcAiTask { goal = response.goal, cropId = response.cropId } };
+            // Validate the entire response before changing any existing work.
+            if (response == null || response.schemaVersion != 1 || response.requestId <= newestAcceptedRequest ||
+                response.requestId > nextRequestId || !string.IsNullOrEmpty(response.error) ||
+                !TryParseMode(response.scheduleMode, out var mode))
+            { SetStatus("AI 决策无效，原任务保持不变"); return; }
+            if (autonomous && (mode == NpcScheduleMode.CancelAll || mode == NpcScheduleMode.CancelCurrent))
+            { SetStatus("状态通知不能取消玩家任务，原任务保持不变"); return; }
+            var tasks = response.tasks ?? Array.Empty<NpcAiTask>();
+            if (tasks.Length == 0 && response.goal != "unknown" && !string.IsNullOrWhiteSpace(response.goal))
+                tasks = new[] { new NpcAiTask { goal = response.goal, cropId = response.cropId } };
             var orders = new List<WorkOrder>();
-            foreach (var task in taskResults)
+            foreach (var task in tasks)
             {
-                if (!TryParseGoal(task.goal, out var parsedGoal)) continue;
-                orders.Add(new WorkOrder
+                if (task == null || !TryParseGoal(task.goal, out var goal))
+                { SetStatus("AI 返回了无法执行的任务，原任务保持不变"); return; }
+                orders.Add(new WorkOrder { Id = response.requestId, Goal = goal, CropId = task.cropId ?? "" });
+            }
+            if (orders.Count > 8 || ((mode == NpcScheduleMode.CancelAll || mode == NpcScheduleMode.CancelCurrent) && orders.Count > 0))
+            { SetStatus("AI 取消操作混入了新任务，原任务保持不变"); return; }
+            newestAcceptedRequest = response.requestId;
+            if (mode == NpcScheduleMode.CancelAll || mode == NpcScheduleMode.CancelCurrent)
+            {
+                CancelExecution();
+                current = null;
+                if (mode == NpcScheduleMode.CancelAll) queue.Clear();
+                lastPlanSummary = mode == NpcScheduleMode.CancelAll ? "AI 规划：清空全部任务" : "AI 规划：仅取消当前任务";
+            }
+            else if (orders.Count > 0)
+            {
+                if (mode == NpcScheduleMode.Priority && orders.Count == 1 && current != null && SameOrder(current, orders[0]))
                 {
-                    Id = response.requestId,
-                    Goal = parsedGoal,
-                    CropId = task.cropId,
-                    Dialogue = response.dialogue
-                });
+                    // A reminder about the running task must not restart its journey or action.
+                    lastPlanSummary = "AI 确认继续当前任务：" + GoalLabel(current.Goal);
+                    Say(response.dialogue, "·");
+                    return;
+                }
+                if (mode == NpcScheduleMode.Priority)
+                {
+                    CancelExecution();
+                    if (current != null) queue.AddFirst(current);
+                    current = null;
+                    // Reuse existing work and its target progress; never replace the whole queue.
+                    var selected = new List<WorkOrder>();
+                    foreach (var order in orders)
+                    {
+                        if (selected.Any(x => SameOrder(x, order))) continue;
+                        var existing = queue.FirstOrDefault(x => SameOrder(x, order));
+                        if (existing != null) queue.Remove(existing);
+                        selected.Add(existing ?? order);
+                    }
+                    for (int i = selected.Count - 1; i >= 0; i--) queue.AddFirst(selected[i]);
+                }
+                else foreach (var order in orders)
+                {
+                    if ((current == null || !SameOrder(current, order)) && !queue.Any(x => SameOrder(x, order)))
+                        queue.AddLast(order);
+                }
+                lastPlanSummary = (mode == NpcScheduleMode.Priority ? "AI 插队，原任务保留：" : "AI 追加，已有任务保留：") +
+                    string.Join(" → ", orders.Select(x => GoalLabel(x.Goal)));
             }
-            if (orders.Count == 0) { Say(response.dialogue, "?"); return; }
-            lastPlanSummary = "AI 规划：" + string.Join(" → ", orders.Select(x => GoalLabel(x.Goal)));
-            if (mode == NpcScheduleMode.Priority)
+            Say(response.dialogue, "·");
+            if (!string.IsNullOrWhiteSpace(response.dialogue))
             {
-                if (current != null) interrupted.Push(current);
-                CancelAgent();
-                current = orders[0];
-                for (int i = orders.Count - 1; i >= 1; i--) queue.AddFirst(orders[i]);
-                orders[orders.Count - 1].ResumeInterruptedAfter = true;
+                memory.Add("AI 回复：" + response.dialogue);
+                if (memory.Count > 8) memory.RemoveAt(0);
             }
-            else foreach (var order in orders) queue.AddLast(order);
-            Say(response.dialogue, mode == NpcScheduleMode.Priority ? "!" : "✓");
+            UpdatePlanUI();
+        }
+
+        static bool SameOrder(WorkOrder a, WorkOrder b) => a.Goal == b.Goal && (a.CropId ?? "") == (b.CropId ?? "");
+
+        void StartTravel(IEnumerator routine)
+        {
+            travelRoutine = StartCoroutine(routine);
+        }
+
+        void CancelExecution()
+        {
+            if (travelRoutine != null) StopCoroutine(travelRoutine);
+            travelRoutine = null;
+            CancelAgent();
+            if (agent != null) agent.StopTravelMotion();
+            if (current != null && (current.Goal == NpcGoalKind.Drink || current.Goal == NpcGoalKind.Sleep || current.Goal == NpcGoalKind.Store))
+                current.Started = false;
+            travelling = sleeping = resting = goingToSleep = awaitingDrinkSource = false;
+            travelPurpose = stepBlockReason = null;
+            travelRetryAfter = 0;
         }
 
         void ProcessNextStep()
@@ -662,10 +690,36 @@ namespace HappyHarvest
             if (current == null)
             {
                 if (queue.Count > 0) { current = queue.First.Value; queue.RemoveFirst(); }
-                else if (interrupted.Count > 0) current = interrupted.Pop();
                 else return;
             }
-            if (current.Goal == NpcGoalKind.Sleep) { StartTripHome(false); current = null; return; }
+            if (current.Goal == NpcGoalKind.Rest)
+            {
+                resting = true;
+                stamina = Mathf.Min(100, stamina + restRecoveryPerSecond * Time.deltaTime);
+                if (stamina >= 55) CompleteCurrentOrder("休息完成，体力已恢复");
+                return;
+            }
+            if (current.Goal == NpcGoalKind.Eat)
+            {
+                if (TryEatFromInventory()) CompleteCurrentOrder("进食完成");
+                else stepBlockReason = "背包没有食物";
+                return;
+            }
+            if (current.Goal == NpcGoalKind.Sleep)
+            {
+                if (!current.Started) { current.Started = true; StartTripHome(false); }
+                return;
+            }
+            if (current.Goal == NpcGoalKind.Drink)
+            {
+                if (!current.Started)
+                {
+                    current.Started = true;
+                    awaitingDrinkSource = true;
+                    StartTripHome(true);
+                }
+                return;
+            }
             if (terrain == null || terrain.State == null)
             {
                 if (SceneManager.GetActiveScene().name == "House_Interior")
@@ -673,7 +727,7 @@ namespace HappyHarvest
                     travelling = true;
                     travelPurpose = "从家中前往农场执行任务";
                     SetStatus("收到农务安排，正在出门");
-                    StartCoroutine(WalkToExitThenChangeScene("Exit_Trigger", 2, 0, "Farm_Outdoor"));
+                    StartTravel(WalkToExitThenChangeScene("Exit_Trigger", 2, 0, "Farm_Outdoor"));
                 }
                 else
                 {
@@ -681,6 +735,12 @@ namespace HappyHarvest
                 }
                 return;
             }
+            if (current.Goal == NpcGoalKind.Store)
+            {
+                if (!current.Started) { current.Started = true; StartTravel(StoreProductsAtWarehouse()); }
+                return;
+            }
+            if (stamina <= 12) { stepBlockReason = "体力不足，等待 AI 安排休息"; SetStatus(stepBlockReason); return; }
             if (!current.Started) StartOrder(current);
             if (TryStartFarmAction(current)) return;
             if (travelling) return;
@@ -697,12 +757,7 @@ namespace HappyHarvest
                 SetStatus("作物正在生长，等待下一项农活");
                 return;
             }
-            string message = current.HasWorked ? "这一轮农活完成了，终于能歇会儿。" : "现在没有符合条件的农活。";
-            memory.Add(message);
-            if (memory.Count > 8) memory.RemoveAt(0);
-            bool resumeInterrupted = current.ResumeInterruptedAfter;
-            current = resumeInterrupted && interrupted.Count > 0 ? interrupted.Pop() : null;
-            Say(message, "✓");
+            CompleteCurrentOrder(current.HasWorked ? "当前农务任务完成" : "当前任务没有符合条件的农田目标");
         }
 
         void StartOrder(WorkOrder order)
@@ -761,8 +816,7 @@ namespace HappyHarvest
                     var crop = terrain.GetCropDataAt(target.Cell)?.GrowingCrop;
                     if (crop != null && !npc.CanFitInInventory(crop.Produce, crop.ProductPerHarvest))
                     {
-                        if (HasStoredProducts()) StartCoroutine(StoreProductsAtWarehouse());
-                        else stepBlockReason = "背包没有可存放的农产品，请先腾出空间";
+                        stepBlockReason = "背包已满，等待 AI 安排 store 卸货或其他任务";
                         return false;
                     }
                 }
@@ -775,7 +829,11 @@ namespace HappyHarvest
                     _ => false
                 };
             }
-            if (!accepted) order.Targets.Remove(target.Id);
+            if (!accepted)
+            {
+                stepBlockReason = "动作暂时无法启动，保留目标并等待重试";
+                travelRetryAfter = Time.time + 3f;
+            }
             return accepted;
         }
 
@@ -797,6 +855,8 @@ namespace HappyHarvest
             }
             if (warehouseTarget == null)
             {
+                current.Started = false;
+                travelRetryAfter = Time.time + 5f;
                 stepBlockReason = "农场中没有找到储物箱，收获任务正在等待";
                 yield break;
             }
@@ -804,10 +864,13 @@ namespace HappyHarvest
             travelling = true;
             travelPurpose = "前往储物箱卸货";
             mood = "不满";
-            Say("背包又满了……我先去把收成存起来。", "箱");
+            SetStatus("正在执行 AI 仓库卸货安排");
             yield return WalkToTarget(warehouseTarget, .55f, false);
             if (!travelArrived || Vector2.Distance(npc.transform.position, warehouseTarget.position) > 2f)
             {
+                current.Started = false;
+                travelling = false;
+                travelRetryAfter = Time.time + 5f;
                 stepBlockReason = "无法走到储物箱，收获任务正在等待";
                 yield break;
             }
@@ -832,7 +895,7 @@ namespace HappyHarvest
             mood = "平静";
             memory.Add($"背包已满，向储物箱存入了 {stored} 件农产品");
             if (memory.Count > 8) memory.RemoveAt(0);
-            Say($"存好了，一共 {stored} 件。接着收。", "✓");
+            CompleteCurrentOrder($"卸货完成，共存入 {stored} 件农产品");
         }
 
         void OnTaskFinished(NpcWateringAgent.TaskState state, string message)
@@ -845,8 +908,6 @@ namespace HappyHarvest
                 hunger = Mathf.Max(0, hunger - 1.5f);
                 thirst = Mathf.Max(0, thirst - 2.5f);
                 mood = stamina < 35 ? "疲惫" : "平静";
-                if (agent.CurrentAction == NpcWateringAgent.FarmAction.Plant && activeSeedIndex >= 0)
-                    npc.Inventory.Remove(activeSeedIndex, 1);
                 if (agent.CurrentAction == NpcWateringAgent.FarmAction.Harvest)
                 {
                     var harvestedPlot = terrain.State.GetPlot(agent.TargetCell);
@@ -863,7 +924,7 @@ namespace HappyHarvest
                 mood = "不满";
                 memory.Add(message);
                 if (memory.Count > 8) memory.RemoveAt(0);
-                Say(message, "!");
+                ReportEvent(message);
             }
             else SetStatus(message);
         }
@@ -904,7 +965,6 @@ namespace HappyHarvest
             }
             npc.Inventory.Remove(bestIndex, 1);
             hunger = Mathf.Min(100, hunger + 45);
-            Say("先垫一口，饿着肚子可干不了活。", "🍴");
             return true;
         }
 
@@ -930,14 +990,15 @@ namespace HappyHarvest
             activeSeedIndex = -1;
         }
 
-        static bool TryParseMode(string value, out NpcScheduleMode mode) => Enum.TryParse(ToPascal(value), true, out mode);
-        static bool TryParseGoal(string value, out NpcGoalKind goal) => Enum.TryParse(ToPascal(value), true, out goal) && goal != NpcGoalKind.Unknown;
+        static string GoalKey(NpcGoalKind goal) => goal == NpcGoalKind.FarmCycle ? "farm_cycle" : goal.ToString().ToLowerInvariant();
+        static bool TryParseMode(string value, out NpcScheduleMode mode) => Enum.TryParse(ToPascal(value), true, out mode) && Enum.IsDefined(typeof(NpcScheduleMode), mode);
+        static bool TryParseGoal(string value, out NpcGoalKind goal) => Enum.TryParse(ToPascal(value), true, out goal) && Enum.IsDefined(typeof(NpcGoalKind), goal) && goal != NpcGoalKind.Unknown;
         static string ToPascal(string value) => string.Join("", (value ?? "").Split('_').Select(x => x.Length == 0 ? x : char.ToUpperInvariant(x[0]) + x.Substring(1)));
 
         void Say(string dialogue, string icon)
         {
             SetStatus(dialogue);
-            if (bubbleText == null) return;
+            if (bubbleText == null || string.IsNullOrWhiteSpace(dialogue)) return;
             bubbleText.text = icon + "  " + dialogue;
             if (bubbleObject != null) bubbleObject.SetActive(true);
             bubbleUntil = Time.unscaledTime + 4f;
@@ -948,9 +1009,18 @@ namespace HappyHarvest
         void UpdateUI()
         {
             if (needsText != null)
-                needsText.text = $"体力 {stamina:0}  饱腹 {hunger:0}  水分 {thirst:0}  心情 {mood}\n当前：{(current == null ? "空闲" : GoalLabel(current.Goal))}  待办：{queue.Count + interrupted.Count}";
+                needsText.text = $"体力 {stamina:0}  饱腹 {hunger:0}  水分 {thirst:0}  心情 {mood}\n当前：{(current == null ? "空闲" : GoalLabel(current.Goal))}  待办：{queue.Count}";
             UpdatePlanUI();
-            if (bubbleObject != null && bubbleObject.activeInHierarchy) bubbleObject.transform.position = npc.transform.position + new Vector3(0, 2.45f, 0);
+            if (bubbleObject != null && bubbleObject.activeInHierarchy)
+            {
+                var activeCamera = Camera.main;
+                if (activeCamera != null)
+                {
+                    var screenPosition = activeCamera.WorldToScreenPoint(
+                        npc.transform.position + new Vector3(0, 2.45f, 0));
+                    bubbleRect.position = screenPosition;
+                }
+            }
             if (bubbleObject != null && Time.unscaledTime >= bubbleUntil) bubbleObject.SetActive(false);
         }
 
@@ -981,11 +1051,6 @@ namespace HappyHarvest
                 foreach (var order in queue.Take(5)) lines.Add($"{number++}. {GoalLabel(order.Goal)}");
                 if (queue.Count > 5) lines.Add($"…另有 {queue.Count - 5} 项");
             }
-            if (interrupted.Count > 0)
-            {
-                lines.Add("");
-                lines.Add("暂停后恢复：" + GoalLabel(interrupted.Peek().Goal));
-            }
             if (current?.Goal == NpcGoalKind.FarmCycle)
             {
                 lines.Add("");
@@ -1010,7 +1075,7 @@ namespace HappyHarvest
         {
             NpcGoalKind.FarmCycle => "完成一轮农活", NpcGoalKind.Plant => "播种", NpcGoalKind.Water => "浇水",
             NpcGoalKind.Fertilize => "施肥", NpcGoalKind.Weed => "除草", NpcGoalKind.Harvest => "收获",
-            NpcGoalKind.Sleep => "回家睡觉", _ => "未知"
+            NpcGoalKind.Drink => "喝水", NpcGoalKind.Sleep => "回家睡觉", NpcGoalKind.Rest => "休息", NpcGoalKind.Eat => "吃东西", NpcGoalKind.Store => "仓库卸货", _ => "未知"
         };
 
         void BuildUI()
@@ -1022,7 +1087,8 @@ namespace HappyHarvest
             root.transform.SetParent(transform, false);
             canvas = root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 200;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 32000;
             var scaler = root.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280, 720);
@@ -1043,7 +1109,12 @@ namespace HappyHarvest
             var placeholder = MakeText("例如：去干农活", inputRect, font, new Vector2(8, -5), new Vector2(236, 32), 16);
             placeholder.color = new Color(.35f, .38f, .36f, .75f);
             input.placeholder = placeholder;
-            input.onEndEdit.AddListener(value => { if (!string.IsNullOrWhiteSpace(value)) SubmitCommand(); });
+            input.onEndEdit.AddListener(value =>
+            {
+                var keyboard = UnityEngine.InputSystem.Keyboard.current;
+                if (!input.wasCanceled && keyboard != null &&
+                    (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)) SubmitCommand();
+            });
 
             var buttonRect = MakeRect("Send", panel, new Vector2(274, -132), new Vector2(64, 42));
             buttonRect.gameObject.AddComponent<Image>().color = new Color(.25f, .52f, .36f, 1);
@@ -1064,12 +1135,17 @@ namespace HappyHarvest
             bubbleObject = bubbleRoot;
             bubbleRoot.transform.SetParent(transform, false);
             var bubbleCanvas = bubbleRoot.GetComponent<Canvas>();
-            bubbleCanvas.renderMode = RenderMode.WorldSpace;
-            bubbleCanvas.sortingOrder = 300;
-            var bubbleRect = bubbleRoot.GetComponent<RectTransform>();
+            bubbleCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            bubbleCanvas.overrideSorting = true;
+            bubbleCanvas.sortingOrder = short.MaxValue;
+            var bubbleScaler = bubbleRoot.AddComponent<CanvasScaler>();
+            bubbleScaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            bubbleScaler.referenceResolution = new Vector2(1280, 720);
+            bubbleRect = MakeRect("Bubble Panel", bubbleRoot.transform, Vector2.zero, new Vector2(360, 58));
+            bubbleRect.anchorMin = bubbleRect.anchorMax = bubbleRect.pivot = new Vector2(.5f, .5f);
             bubbleRect.sizeDelta = new Vector2(360, 58);
-            bubbleRect.localScale = Vector3.one * .01f;
-            var bg = bubbleRoot.AddComponent<Image>();
+            bubbleRect.localScale = Vector3.one;
+            var bg = bubbleRect.gameObject.AddComponent<Image>();
             bg.color = new Color(.05f, .07f, .08f, .88f);
             bubbleText = MakeText("", bubbleRect, font, Vector2.zero, bubbleRect.sizeDelta, 20);
             bubbleText.alignment = TextAnchor.MiddleCenter;

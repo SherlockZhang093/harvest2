@@ -193,6 +193,61 @@ namespace HappyHarvest
             return amount;
         }
 
+        public int GetItemCount<T>() where T : Item
+        {
+            int count = 0;
+            for (int i = 0; i < Entries.Length; i++)
+            {
+                if (Entries[i].Item is T)
+                    count += Entries[i].StackSize;
+            }
+            return count;
+        }
+
+        public bool TryRemoveItem<T>(int count) where T : Item
+        {
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            if (count == 0) return true;
+            if (GetItemCount<T>() < count) return false;
+
+            var changedIndices = new List<int>();
+            var previousItems = new List<Item>();
+            var previousCounts = new List<int>();
+            int remaining = count;
+
+            try
+            {
+                for (int i = 0; i < Entries.Length && remaining > 0; i++)
+                {
+                    if (!(Entries[i].Item is T)) continue;
+
+                    changedIndices.Add(i);
+                    previousItems.Add(Entries[i].Item);
+                    previousCounts.Add(Entries[i].StackSize);
+
+                    int amount = Mathf.Min(remaining, Entries[i].StackSize);
+                    Entries[i].StackSize -= amount;
+                    remaining -= amount;
+                    if (Entries[i].StackSize == 0) Entries[i].Item = null;
+                }
+
+                if (remaining != 0) throw new InvalidOperationException("Inventory changed during item removal.");
+                UIHandler.UpdateInventory(this);
+                return true;
+            }
+            catch
+            {
+                for (int i = 0; i < changedIndices.Count; i++)
+                {
+                    Entries[changedIndices[i]].Item = previousItems[i];
+                    Entries[changedIndices[i]].StackSize = previousCounts[i];
+                }
+                try { UIHandler.UpdateInventory(this); }
+                catch { }
+                return false;
+            }
+        }
+
         public void EquipNext()
         {
             EquippedItemIdx += 1;

@@ -10,7 +10,7 @@
 4. 执行 `npm run dev`。
 5. 让 `Assets/StreamingAssets/npc-ai-config.json` 中的 `accessToken` 与测试 token 相同。
 
-本机地址默认为 `http://127.0.0.1:8787/npc/decide`。服务不可用时，游戏自动使用原有本地规划器。
+本机地址默认为 `http://127.0.0.1:8787/npc/decide`。服务不可用时重试一次，仍失败则保留已有任务并提示错误，不使用本地规划器。AI 是唯一的行为决策来源；新任务采用追加或插队，保留原有任务和进度。
 
 ## 发布给朋友
 

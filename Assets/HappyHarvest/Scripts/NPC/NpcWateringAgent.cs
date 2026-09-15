@@ -34,6 +34,7 @@ namespace HappyHarvest
         Vector2 facing = Vector2.down;
         bool applied;
         Crop plantingCrop;
+        InventorySystem inventory;
 
         void Awake()
         {
@@ -48,6 +49,7 @@ namespace HappyHarvest
         {
             terrain = farm;
             var avatar = GetComponent<PlayerController>();
+            inventory = avatar?.Inventory;
             if (ItemAttachBone == null && avatar != null) ItemAttachBone = avatar.ItemAttachBone;
             if (WateringCan == null) WateringCan = GameManager.Instance.ItemDatabase.GetFromID("water_can") as WaterCan;
             if (toolAnimator == null && WateringCan != null && ItemAttachBone != null)
@@ -124,7 +126,11 @@ namespace HappyHarvest
             if (plot == null) return Reject("目标不在农田数据中");
             if (action == FarmAction.Water && (!plot.NeedsWater || toolAnimator == null)) return Reject("目标作物不需要浇水");
             if (action == FarmAction.Plant && (!plot.CanPlant || crop == null)) return Reject("目标不能播种");
+            if (action == FarmAction.Plant && !HasSeedFor(crop))
+                return Reject("背包里没有对应的种子，无法播种");
             if (action == FarmAction.Fertilize && !plot.NeedsFertilizer) return Reject("目标不需要施肥");
+            if (action == FarmAction.Fertilize && (inventory == null || inventory.GetItemCount<Fertilizer>() <= 0))
+                return Reject("背包里没有肥料，无法施肥");
             if (action == FarmAction.Weed && !plot.NeedsWeeding) return Reject("目标没有杂草");
             if (action == FarmAction.Harvest && !plot.CanHarvest) return Reject("目标还不能收获");
             Physics2D.SyncTransforms();
@@ -264,10 +270,43 @@ namespace HappyHarvest
             {
                 case FarmAction.Plant:
                     if (!terrain.IsPlantable(TargetCell)) return;
+                    if (!TryConsumeSeed(plantingCrop, out var consumedSeed))
+                    {
+                        Finish(TaskState.Failed, "对应种子已用完，播种未生效");
+                        return;
+                    }
                     terrain.PlantAt(TargetCell, plantingCrop);
                     applied = terrain.GetCropDataAt(TargetCell)?.GrowingCrop == plantingCrop;
+                    if (!applied)
+                        inventory.AddItem(consumedSeed);
                     break;
-                case FarmAction.Fertilize: applied = terrain.TryFertilizeAt(TargetCell); break;
+                case FarmAction.Fertilize:
+                    if (inventory == null || inventory.GetItemCount<Fertilizer>() <= 0)
+                    {
+                        Finish(TaskState.Failed, "肥料已用完，施肥未生效");
+                        return;
+                    }
+                    if (!terrain.TryFertilizeAt(TargetCell)) return;
+                    try
+                    {
+                        applied = inventory.TryRemoveItem<Fertilizer>(1);
+                    }
+                    catch (Exception error)
+                    {
+                        Debug.LogException(error, this);
+                        applied = false;
+                    }
+                    if (!applied)
+                    {
+                        var plot = terrain.State.GetPlot(TargetCell);
+                        if (plot != null)
+                        {
+                            plot.IsFertilized = false;
+                            terrain.State.MarkChanged();
+                        }
+                        Finish(TaskState.Failed, "肥料扣除失败，已撤销施肥效果");
+                    }
+                    break;
                 case FarmAction.Weed: applied = terrain.TryRemoveWeedsAt(TargetCell); break;
                 case FarmAction.Harvest:
                     var crop = terrain.GetCropDataAt(TargetCell)?.GrowingCrop;
@@ -280,6 +319,30 @@ namespace HappyHarvest
                     applied = true;
                     break;
             }
+        }
+
+        bool HasSeedFor(Crop crop)
+        {
+            if (inventory == null || crop == null) return false;
+            foreach (var entry in inventory.Entries)
+                if (entry.Item is SeedBag seed && seed.PlantedCrop == crop && entry.StackSize > 0)
+                    return true;
+            return false;
+        }
+
+        bool TryConsumeSeed(Crop crop, out SeedBag consumedSeed)
+        {
+            consumedSeed = null;
+            if (inventory == null || crop == null) return false;
+            for (int i = 0; i < inventory.Entries.Length; i++)
+            {
+                var entry = inventory.Entries[i];
+                if (!(entry.Item is SeedBag seed) || seed.PlantedCrop != crop || entry.StackSize <= 0) continue;
+                if (inventory.Remove(i, 1) != 1) return false;
+                consumedSeed = seed;
+                return true;
+            }
+            return false;
         }
 
         // Called by the existing watering-can VFX animation event, never by the UI.

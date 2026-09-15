@@ -294,8 +294,8 @@ MonoBehaviour:
       StackSize: 10
     - Item: {fileID: 11400000, guid: 72f289a3f969ccc419c7805ac712fd29, type: 2}
       StackSize: 10
-    - Item: {fileID: 0}
-      StackSize: 0
+    - Item: {fileID: 11400000, guid: 6dd155120fae4430b624262753be14d1, type: 2}
+      StackSize: 3
     - Item: {fileID: 0}
       StackSize: 0
     - Item: {fileID: 0}
